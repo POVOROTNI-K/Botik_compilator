@@ -24,23 +24,22 @@ from telegram.ext import (
     ContextTypes
 )
 
-# Настройки
+
 TOKEN = "8029314491:AAFiFXIBkWPUaf8Up1zFkDpsRTNc5v9UiCg"
 
-# Настройка логгера с выводом в реальном времени
+
 def setup_logging():
     # Создаем форматтер
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - USER:%(user_id)s - ACTION:%(action)s')
     
-    # Обработчик для файла с немедленной записью
+  
     file_handler = logging.FileHandler('bot_commands.log', encoding='utf-8', mode='a')
     file_handler.setFormatter(formatter)
     
-    # Обработчик для консоли с немедленным выводом
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
     
-    # Настраиваем основной логгер
+    
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logger.addHandler(file_handler)
@@ -50,7 +49,7 @@ def setup_logging():
 
 logger = setup_logging()
 
-# Хранилища статистики
+
 command_stats = defaultdict(int)
 user_activity = defaultdict(lambda: defaultdict(int))
 
@@ -63,27 +62,27 @@ def log_action(user_id: int, action: str):
         'time': datetime.now().isoformat()
     }
     
-    # Немедленный вывод в консоль
+    
     print(f"[REALTIME] {log_record}", flush=True)  # flush=True для немедленного вывода
     
-    # Стандартное логирование
+
     logger.info(
         "User action",
         extra={'user_id': user_id, 'action': action}
     )
     
-    # Обновляем статистику
+
     command_stats[action] += 1
     user_activity[user_id][action] += 1
 
-# Главное меню
+
 def main_menu_keyboard():
     return ReplyKeyboardMarkup([
         ["📄 Работа с файлами", "ℹ️ Помощь"],
         ["🔄 Эхо-режим", "⚙️ Настройки"]
     ], resize_keyboard=True)
 
-# Меню выбора конвертации
+
 def conversion_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("DOCX ➡ LaTeX", callback_data="docx_to_tex")],
@@ -329,11 +328,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         })
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда для просмотра статистики"""
+    
     user = update.effective_user
     log_action(user.id, '/stats')
     
-    # Формируем отчет
+
     report = [
         "📊 Статистика бота:",
         f"👥 Всего пользователей: {len(user_activity)}",
@@ -344,7 +343,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for action, count in sorted(command_stats.items(), key=lambda x: x[1], reverse=True)[:5]:
         report.append(f"- {action}: {count}")
     
-    # Добавляем персональную статистику
+  
     if user.id in user_activity:
         report.append("\n👤 Ваша активность:")
         for action, count in user_activity[user.id].items():
@@ -356,7 +355,7 @@ def main():
     try:
         application = Application.builder().token(TOKEN).build()
 
-        # Регистрация обработчиков
+        
         handlers = [
             CommandHandler('start', start),
             CommandHandler('help', help_command),
