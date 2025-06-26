@@ -4,13 +4,19 @@ import tempfile
 import asyncio
 import zipfile
 import pypandoc
+import subprocess
+import shutil
+import sys
+import pytesseract
+import win32api  # Для работы с путями в Windows
+from pdf2image import convert_from_path
+from PIL import Image
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputFile,
-    ReplyKeyboardMarkup,
-    KeyboardButton
+    ReplyKeyboardMarkup
 )
 from telegram.ext import (
     Application,
@@ -21,16 +27,188 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
-
 # Настройки
 TOKEN = "8029314491:AAFiFXIBkWPUaf8Up1zFkDpsRTNc5v9UiCg"
 logging.basicConfig(
-    filename="bot.log",  # Логи будут сохраняться в этот файл
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-print(os.getcwd())
 logger = logging.getLogger(__name__)
+
+# Автоматическая настройка Tesseract
+try:
+    tesseract_path = shutil.which('tesseract')
+    if tesseract_path:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        logger.info(f"Tesseract найден: {tesseract_path}")
+    else:
+        # Стандартные пути
+        possible_paths = [
+            '/opt/homebrew/bin/tesseract',    # macOS Apple Silicon
+            '/usr/local/bin/tesseract',        # macOS Intel
+            '/usr/bin/tesseract',              # Linux
+            r'C:\Program Files\Tesseract-OCR\tesseract.exe'  # Windows
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                logger.info(f"Используется Tesseract: {path}")
+                break
+        else:
+            logger.warning("Tesseract не найден! Функции OCR будут недоступны")
+except Exception as e:
+    logger.error(f"Ошибка инициализации Tesseract: {str(e)}")
+
+# ================== ФУНКЦИИ КОНВЕРТАЦИИ PDF-LATEX ==================
+
+def escape_latex(text):
+    """Экранирует специальные символы для LaTeX."""
+    temp_marker = '__!!BACKSLASH!!__'
+    text = text.replace('\\', temp_marker)
+    replacements = {
+        '{': r'\{', '}': r'\}',
+        '#': r'\#', '$': r'\$', '%': r'\%',
+        '&': r'\&', '_': r'\_', '~': r'\textasciitilde{}',
+        '^': r'\textasciicircum{}'
+    }
+    for char, escaped in replacements.items():
+        text = text.replace(char, escaped)
+    text = text.replace(temp_marker, r'\textbackslash{}')
+    return text
+
+def pdf_to_latex(pdf_path, output_tex_path, lang='rus+eng'):
+    """Конвертирует PDF в LaTeX с помощью OCR."""
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Конвертируем PDF в изображения
+            images = convert_from_path(pdf_path, output_folder=temp_dir)
+            
+            latex_content = [
+                r"\documentclass{article}",
+                r"\usepackage[T1,T2A]{fontenc}",
+                r"\usepackage[utf8]{inputenc}",
+                r"\usepackage[russian,english]{babel}",
+                r"\usepackage{cmap}",
+                r"\usepackage{textcomp}",
+                r"\begin{document}"
+            ]
+            
+            for i, image in enumerate(images):
+                img_path = os.path.join(temp_dir, f"page_{i+1}.png")
+                image.save(img_path, 'PNG')
+                
+                # Распознаём текст
+                text = pytesseract.image_to_string(
+                    Image.open(img_path), 
+                    lang=lang
+                )
+                escaped_text = escape_latex(text)
+                latex_content.append(escaped_text)
+                
+                if i < len(images) - 1:
+                    latex_content.append(r"\newpage")
+            
+            latex_content.append(r"\end{document}")
+            
+            with open(output_tex_path, 'w', encoding='utf-8') as f:
+                f.write("\n".join(latex_content))
+                
+        return True
+    except Exception as e:
+        logger.error(f"PDF to LaTeX error: {str(e)}")
+        return False
+
+def latex_to_pdf(latex_file, pdf_file=None, clean_temp=True):
+    """Компилирует LaTeX в PDF с обработкой путей Windows."""
+    try:
+        # Создаем абсолютные пути
+        latex_file = os.path.abspath(latex_file)
+        work_dir = os.path.dirname(latex_file)
+        base_name = os.path.splitext(os.path.basename(latex_file))[0]
+        
+        # Для Windows: преобразуем в короткие пути (8.3)
+        if sys.platform == 'win32':
+            try:
+                latex_file = win32api.GetShortPathName(latex_file)
+                work_dir = win32api.GetShortPathName(work_dir)
+                logger.info(f"Converted to short path: {latex_file}")
+            except Exception as e:
+                logger.warning(f"Short path conversion failed: {str(e)}")
+        
+        # Определяем выходной PDF
+        if not pdf_file:
+            pdf_file = os.path.join(work_dir, f"{base_name}.pdf")
+        pdf_file = os.path.abspath(pdf_file)
+        
+        # Проверяем блокировку файла
+        if os.path.exists(pdf_file):
+            try:
+                os.remove(pdf_file)
+            except PermissionError:
+                raise RuntimeError(f"PDF file is locked: {pdf_file}")
+        
+        # Компилируем с помощью pdflatex (2 прохода)
+        compile_cmd = [
+            "pdflatex",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            "-file-line-error",
+            f"-output-directory={work_dir}",
+            latex_file
+        ]
+        
+        # Первый проход
+        result1 = subprocess.run(
+            compile_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=work_dir
+        )
+        
+        # Второй проход
+        result2 = subprocess.run(
+            compile_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=work_dir
+        )
+        
+        # Проверяем результат
+        final_pdf = os.path.join(work_dir, f"{base_name}.pdf")
+        if not os.path.exists(final_pdf):
+            error_msg = "\n".join([
+                "LaTeX compilation error:",
+                "=== FIRST PASS ===",
+                result1.stdout[:1000],
+                result1.stderr[:1000],
+                "=== SECOND PASS ===",
+                result2.stdout[:1000],
+                result2.stderr[:1000]
+            ])
+            raise RuntimeError(error_msg)
+        
+        # Перемещаем итоговый PDF
+        shutil.move(final_pdf, pdf_file)
+        logger.info(f"PDF compiled: {pdf_file}")
+        
+        # Очищаем временные файлы
+        if clean_temp:
+            temp_extensions = ['.aux', '.log', '.out', '.toc', '.lof', '.lot']
+            for ext in temp_extensions:
+                temp_file = os.path.join(work_dir, f"{base_name}{ext}")
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            logger.info("Temporary files cleaned")
+            
+        return True
+    except Exception as e:
+        logger.error(f"LaTeX to PDF error: {str(e)}")
+        return False
+
+# ================== ТЕЛЕГРАМ БОТ ==================
 
 # Главное меню
 def main_menu_keyboard():
@@ -42,36 +220,48 @@ def main_menu_keyboard():
 # Меню выбора конвертации
 def conversion_menu_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("DOCX ➡ LaTeX", callback_data="docx_to_tex")],
-        [InlineKeyboardButton("LaTeX ➡ DOCX", callback_data="tex_to_docx")]
+        [InlineKeyboardButton("DOCX ➡ LaTeX", callback_data="docx_to_tex"),
+         InlineKeyboardButton("LaTeX ➡ DOCX", callback_data="tex_to_docx")],
+        [InlineKeyboardButton("PDF ➡ LaTeX", callback_data="pdf_to_tex"),
+         InlineKeyboardButton("LaTeX ➡ PDF", callback_data="tex_to_pdf")]
     ])
 
 async def start(update: Update, context: CallbackContext):
     user = update.effective_user
     await update.message.reply_text(
-        f"Привет, {user.first_name}! Я бот для конвертации файлов между LaTeX и DOCX.",
+        f"Привет, {user.first_name}! Я бот для конвертации файлов между форматами.",
         reply_markup=main_menu_keyboard()
     )
 
 async def help_command(update: Update, context: CallbackContext):
-    await update.message.reply_text(
+    help_text = (
         "📌 Используйте кнопки меню для навигации:\n"
         "• 📄 Работа с файлами - преобразование документов\n"
         "• ℹ️ Помощь - это сообщение\n"
         "• 🔄 Эхо-режим - повторение ваших сообщений\n"
-        "• ⚙️ Настройки - параметры бота"
+        "• ⚙️ Настройки - параметры бота\n\n"
+        "Поддерживаемые конвертации:\n"
+        "▸ DOCX ⇄ LaTeX\n"
+        "▸ PDF ⇄ LaTeX\n"
+        "▸ Обработка текстовых файлов\n\n"
+        "Просто отправьте файл после выбора типа конвертации!"
     )
+    await update.message.reply_text(help_text)
 
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     
-    if query.data == "docx_to_tex":
-        context.user_data['conversion'] = 'docx_to_tex'
-        await query.edit_message_text("📤 Отправьте DOCX файл для конвертации в LaTeX")
-    elif query.data == "tex_to_docx":
-        context.user_data['conversion'] = 'tex_to_docx'
-        await query.edit_message_text("📤 Отправьте LaTeX файл (.tex) для конвертации в DOCX")
+    conversion_types = {
+        "docx_to_tex": "📤 Отправьте DOCX файл для конвертации в LaTeX",
+        "tex_to_docx": "📤 Отправьте LaTeX файл (.tex) для конвертации в DOCX",
+        "pdf_to_tex": "📤 Отправьте PDF файл для конвертации в LaTeX",
+        "tex_to_pdf": "📤 Отправьте LaTeX файл (.tex) для компиляции в PDF"
+    }
+    
+    if query.data in conversion_types:
+        context.user_data['conversion'] = query.data
+        await query.edit_message_text(conversion_types[query.data])
 
 async def handle_text(update: Update, context: CallbackContext):
     text = update.message.text
@@ -100,14 +290,28 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # Определение типа конвертации
-        if conversion_type == 'docx_to_tex' or file_ext == '.docx':
-            await process_docx_to_tex(update, doc)
-        elif conversion_type == 'tex_to_docx' or file_ext == '.tex':
-            await process_tex_to_docx(update, doc)
+        handlers = {
+            "docx_to_tex": process_docx_to_tex,
+            "tex_to_docx": process_tex_to_docx,
+            "pdf_to_tex": process_pdf_to_tex,
+            "tex_to_pdf": process_tex_to_pdf
+        }
+        
+        # Автоопределение по расширению
+        if not conversion_type:
+            if file_ext == '.docx':
+                conversion_type = "docx_to_tex"
+            elif file_ext == '.tex':
+                conversion_type = "tex_to_docx"
+            elif file_ext == '.pdf':
+                conversion_type = "pdf_to_tex"
+        
+        if conversion_type and conversion_type in handlers:
+            await handlers[conversion_type](update, doc)
         elif doc.mime_type.startswith("text"):
             await process_text_file(update, doc)
         else:
-            raise ValueError("❌ Неподдерживаемый формат файла!")
+            raise ValueError("❌ Неподдерживаемый формат файла! Выберите тип конвертации.")
 
     except Exception as e:
         logger.error(f"Ошибка обработки файла: {str(e)}")
@@ -115,19 +319,96 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         context.user_data.pop('conversion', None)
 
-async def process_tex_to_docx(update: Update, doc):
+async def process_pdf_to_tex(update: Update, doc):
+    """Обрабатывает конвертацию PDF в LaTeX"""
     with tempfile.TemporaryDirectory() as tmp_dir:
         try:
             # Скачивание файла
             file = await doc.get_file()
             content = await file.download_as_bytearray()
             
-            # Сохранение временного файла
+            # Сохранение PDF
+            pdf_path = os.path.join(tmp_dir, "input.pdf")
+            with open(pdf_path, 'wb') as f:
+                f.write(content)
+            
+            # Конвертация в LaTeX
+            tex_path = os.path.join(tmp_dir, "output.tex")
+            success = pdf_to_latex(pdf_path, tex_path)
+            
+            if not success:
+                raise RuntimeError("Ошибка конвертации PDF в LaTeX")
+            
+            # Улучшение TeX файла
+            enhance_tex_file(tex_path)
+            
+            # Создание архива
+            zip_path = os.path.join(tmp_dir, "converted.zip")
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                zipf.write(tex_path, os.path.basename(tex_path))
+            
+            # Отправка результата
+            with open(zip_path, 'rb') as f:
+                await update.message.reply_document(
+                    document=InputFile(f, filename=f"converted_{doc.file_name.replace('.pdf', '.zip')}"),
+                    caption="✅ PDF -> LaTeX конвертация завершена!\n📦 Архив содержит .tex файл."
+                )
+        except Exception as e:
+            logger.error(f"PDF->TeX ошибка: {str(e)}")
+            await update.message.reply_text(f"❌ Ошибка конвертации: {str(e)}")
+
+async def process_tex_to_pdf(update: Update, doc):
+    """Обрабатывает компиляцию LaTeX в PDF с обработкой путей"""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            # Скачивание файла
+            file = await doc.get_file()
+            content = await file.download_as_bytearray()
+            
+            # Сохранение TeX
             tex_path = os.path.join(tmp_dir, "input.tex")
             with open(tex_path, 'wb') as f:
                 f.write(content)
             
-            # Конвертация
+            # Для Windows: преобразуем в короткий путь
+            if sys.platform == 'win32':
+                try:
+                    tex_path = win32api.GetShortPathName(tex_path)
+                    logger.info(f"Using short path for LaTeX: {tex_path}")
+                except Exception as e:
+                    logger.warning(f"Short path conversion failed: {str(e)}")
+            
+            # Компиляция в PDF
+            pdf_path = os.path.join(tmp_dir, "output.pdf")
+            success = latex_to_pdf(tex_path, pdf_path)
+            
+            if not success:
+                raise RuntimeError("Ошибка компиляции LaTeX в PDF")
+            
+            # Отправка PDF
+            with open(pdf_path, 'rb') as f:
+                await update.message.reply_document(
+                    document=InputFile(f, filename=f"compiled_{doc.file_name.replace('.tex', '.pdf')}"),
+                    caption="✅ LaTeX -> PDF компиляция завершена!"
+                )
+        except Exception as e:
+            logger.error(f"TeX->PDF ошибка: {str(e)}")
+            await update.message.reply_text(f"❌ Ошибка компиляции: {str(e)}")
+
+async def process_tex_to_docx(update: Update, doc):
+    """Обрабатывает конвертацию LaTeX в DOCX"""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            # Скачивание файла
+            file = await doc.get_file()
+            content = await file.download_as_bytearray()
+            
+            # Сохранение TeX
+            tex_path = os.path.join(tmp_dir, "input.tex")
+            with open(tex_path, 'wb') as f:
+                f.write(content)
+            
+            # Конвертация в DOCX
             docx_path = os.path.join(tmp_dir, "output.docx")
             await convert_file(tex_path, docx_path, 'docx',
                              ['--standalone', '--resource-path=.', '--citeproc'])
@@ -138,24 +419,24 @@ async def process_tex_to_docx(update: Update, doc):
                     document=InputFile(f, filename=f"converted_{doc.file_name.replace('.tex', '.docx')}"),
                     caption="✅ LaTeX -> DOCX конвертация завершена!"
                 )
-
         except Exception as e:
             logger.error(f"TeX->DOCX ошибка: {str(e)}")
-            raise
+            await update.message.reply_text(f"❌ Ошибка конвертации: {str(e)}")
 
 async def process_docx_to_tex(update: Update, doc):
+    """Обрабатывает конвертацию DOCX в LaTeX"""
     with tempfile.TemporaryDirectory() as tmp_dir:
         try:
             # Скачивание файла
             file = await doc.get_file()
             content = await file.download_as_bytearray()
             
-            # Сохранение временного файла
+            # Сохранение DOCX
             docx_path = os.path.join(tmp_dir, "input.docx")
             with open(docx_path, 'wb') as f:
                 f.write(content)
             
-            # Конвертация
+            # Конвертация в TeX
             tex_path = os.path.join(tmp_dir, "output.tex")
             await convert_file(docx_path, tex_path, 'latex')
             
@@ -173,68 +454,59 @@ async def process_docx_to_tex(update: Update, doc):
                     document=InputFile(f, filename=f"converted_{doc.file_name.replace('.docx', '.zip')}"),
                     caption="✅ DOCX -> LaTeX конвертация завершена!\n📦 Архив содержит .tex файл с улучшенным шаблоном."
                 )
-
         except Exception as e:
             logger.error(f"DOCX->TeX ошибка: {str(e)}")
-            raise
+            await update.message.reply_text(f"❌ Ошибка конвертации: {str(e)}")
 
 async def process_text_file(update: Update, doc):
+    """Обрабатывает текстовые файлы"""
+    tmp_path = None
     try:
-        # Обработка текстовых файлов
+        # Скачивание файла
         file = await doc.get_file()
         content = await file.download_as_bytearray()
         text = content.decode('utf-8').replace(".", "-")
         
+        # Сохранение обработанного текста
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
             tmp.write(text.encode('utf-8'))
             tmp_path = tmp.name
         
+        # Отправка результата
         with open(tmp_path, 'rb') as f:
             await update.message.reply_document(
                 document=InputFile(f, filename=f"fixed_{doc.file_name}"),
                 caption="✅ Текст обработан: точки заменены на тире!"
             )
+    except Exception as e:
+        logger.error(f"Text processing error: {str(e)}")
+        await update.message.reply_text(f"❌ Ошибка обработки: {str(e)}")
     finally:
-        if os.path.exists(tmp_path):
+        if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
 
 def enhance_tex_file(file_path: str):
+    """Добавляет преамбулу в TeX файл (упрощенная версия)"""
     preamble = r"""\documentclass[12pt, a4paper]{article}
-\usepackage[a4paper, mag=1000, left=1.5cm, right=1.5cm, top=2cm, bottom=2cm, headsep=0.7cm, footskip=1cm]{geometry}
+\usepackage[a4paper, left=15mm, right=15mm, top=20mm, bottom=20mm]{geometry}
 \usepackage[utf8]{inputenc}
-\usepackage[english,russian]{babel}
-\usepackage[colorlinks=true, citecolor=blue, urlcolor=blue, linkcolor = blue]{hyperref}
-\usepackage{graphicx}
-\usepackage{physics}
-\usepackage{amsmath,amssymb}
-\usepackage{float}
 \usepackage[T2A]{fontenc}
-\usepackage{pdfpages}
-\usepackage{mathrsfs}
-\usepackage{multirow}
-\usepackage{multicol}
-\usepackage{mathtools}
-\usepackage{icomma}
-\usepackage{soul}
-\usepackage{wrapfig}
-\usepackage{setspace}
-\usepackage{longtable}
-\usepackage{titlesec}
-\usepackage{array,tabularx,tabulary,booktabs}
-\usepackage{adjustbox}
-\usepackage{cancel}
-\usepackage{centernot}
-\usepackage{subcaption}
-\usepackage{listings}
-\usepackage{hhline}"""
+\usepackage[english,russian]{babel}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\begin{document}"""
 
     with open(file_path, 'r+', encoding='utf-8') as f:
         content = f.read()
-        f.seek(0)
-        f.write(preamble + "\n\\begin{document}\n" + content + "\n\\end{document}")
-        f.truncate()
+        
+        # Проверяем, не добавлена ли уже преамбула
+        if r"\begin{document}" not in content:
+            f.seek(0)
+            f.write(preamble + "\n" + content + "\n\\end{document}")
+            f.truncate()
 
 async def convert_file(input_path: str, output_path: str, fmt: str, args=None):
+    """Асинхронная обертка для pypandoc"""
     try:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
@@ -250,6 +522,7 @@ async def convert_file(input_path: str, output_path: str, fmt: str, args=None):
         raise
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ошибок бота"""
     logger.error("Ошибка:", exc_info=context.error)
     if update:
         await context.bot.send_message(
@@ -258,6 +531,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         )
 
 def main():
+    """Запуск бота"""
+    # Проверка зависимостей для Windows
+    if sys.platform == 'win32':
+        try:
+            import win32api
+            logger.info("win32api available for path conversion")
+        except ImportError:
+            logger.warning("pywin32 not installed! Install with: pip install pywin32")
+    
     application = Application.builder().token(TOKEN).build()
 
     # Регистрация обработчиков
