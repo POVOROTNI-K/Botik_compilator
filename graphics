@@ -3,23 +3,46 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from datetime import datetime
-COMMAND_TRANSLATIONS = {
-    '/start': 'Старт бота',
+COMMAND_TRANSLATIONS.update({
+    # Основные команды
+    '/start': 'Запуск бота',
     '/help': 'Помощь',
-    '/stats': 'Статистика',
-    'select_docx_to_tex': 'Выбор DOCX→LaTeX',
-    'select_tex_to_docx': 'Выбор LaTeX→DOCX',
-    'menu_work_with_files': 'Меню: Работа с файлами',
-    'menu_help': 'Меню: Помощь',
-    'menu_settings': 'Меню: Настройки',
-    'enable_echo_mode': 'Активация эхо-режима',
+    '/stats': 'Просмотр статистики',
+    
+    # Действия с файлами
     'upload_docx': 'Загрузка DOCX',
     'upload_tex': 'Загрузка LaTeX',
     'upload_text': 'Загрузка текста',
-    'conversion_docx_to_tex_success': 'Успешная конвертация DOCX→LaTeX',
-    'conversion_tex_to_docx_success': 'Успешная конвертация LaTeX→DOCX',
-    'echo_message': 'Эхо-сообщение'
-}
+    'upload_unsupported_format': 'Неподдерживаемый формат',
+    'conversion_docx_to_tex_success': 'Конвертация DOCX→LaTeX',
+    'conversion_tex_to_docx_success': 'Конвертация LaTeX→DOCX',
+    'conversion_error': 'Ошибка конвертации',
+    
+    # Меню и выбор
+    'select_docx_to_tex': 'Выбрано DOCX→LaTeX',
+    'select_tex_to_docx': 'Выбрано LaTeX→DOCX',
+    'menu_work_with_files': 'Открыто меню файлов',
+    'menu_help': 'Открыта справка',
+    'menu_settings': 'Открыты настройки',
+    
+    # Эхо-режим
+    'enable_echo_mode': 'Включён эхо-режим',
+    'disable_echo_mode': 'Выключен эхо-режим',
+    'echo_message': 'Повтор сообщения',
+    
+    # Системные события
+    'bot_started': 'Бот запущен',
+    'bot_stopped': 'Бот остановлен',
+    'handler_error': 'Ошибка обработки',
+    'pandoc_error': 'Ошибка Pandoc',
+    
+    # Дополнительные действия
+    'file_downloaded': 'Файл загружен',
+    'file_converted': 'Файл сконвертирован',
+    'file_sent': 'Файл отправлен',
+    'user_blocked': 'Пользователь заблокирован',
+    'admin_command': 'Команда администратора'
+})
 
 def translate_command(command):
     """Переводит техническое название команды в читаемое"""
