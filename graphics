@@ -1,0 +1,42 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import re
+
+# Чтение логов в DataFrame
+df = pd.read_csv(
+    "bot.log",
+    sep=" - ",
+    names=["Time", "Module", "Level", "Message"],
+    engine="python"
+)
+
+# Извлекаем команды (шаблон: "used /command")
+df["Command"] = df["Message"].str.extract(r"used (/\w+)")
+
+# Считаем частоту команд
+command_counts = df["Command"].value_counts().head(10)  # Топ-10 команд
+
+# Если команд нет (NaN), заменяем на "Unknown"
+command_counts = command_counts.fillna("Unknown")
+
+print(command_counts)
+plt.style.use("ggplot")
+
+# Создаём график
+command_counts.plot(
+    kind="bar",
+    color="skyblue",
+    edgecolor="black",
+    figsize=(10, 6),
+    title="Топ популярных команд",
+    xlabel="Команда",
+    ylabel="Количество использований"
+)
+
+# Добавляем подписи значений
+for i, count in enumerate(command_counts):
+    plt.text(i, count + 1, str(count), ha="center")
+
+# Сохраняем график
+plt.savefig("commands_stats.png", bbox_inches="tight")
+plt.show()
