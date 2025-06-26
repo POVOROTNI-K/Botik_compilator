@@ -229,7 +229,8 @@ def conversion_menu_keyboard():
 async def start(update: Update, context: CallbackContext):
     user = update.effective_user
     await update.message.reply_text(
-        f"Привет, {user.first_name}! Я бот для конвертации файлов между форматами.",
+        f"Привет, {user.first_name}! 
+Я бот для конвертации  файлов в LaTeX. Отправь мне файл, требующий обработки, или используй команду \help, чтобы узнать про основные команды.",
         reply_markup=main_menu_keyboard()
     )
 
