@@ -7,7 +7,7 @@ from datetime import datetime
 import matplotlib.font_manager as fm
 import numpy as np
 
-# Подгружаем шрифт для поддержки русского языка
+
 try:
     font_path = 'arial.ttf'  # Попробуем использовать Arial
     font_prop = fm.FontProperties(fname=font_path)
@@ -17,7 +17,7 @@ except:
     plt.rcParams['font.family'] = 'Arial'
     print("Шрифт Arial не найден, используем стандартный")
 
-# Словарь для перевода названий команд
+
 COMMAND_TRANSLATIONS = {
     '/start': 'Запуск бота',
     '/help': 'Помощь',
@@ -39,13 +39,13 @@ COMMAND_TRANSLATIONS = {
 }
 
 def translate_command(command):
-    """Переводит техническое название команды в читаемое"""
+   
     # Извлекаем базовое название действия до двоеточия
     base_action = command.split(':')[0] if ':' in command else command
     return COMMAND_TRANSLATIONS.get(base_action, base_action)
 
 def parse_log_file(log_file_path):
-    """Парсит файл логов и извлекает статистику команд и активность по датам"""
+   
     command_stats = defaultdict(int)
     date_stats = defaultdict(int)  # Статистика по датам
     
@@ -55,7 +55,7 @@ def parse_log_file(log_file_path):
                 continue
                 
             try:
-                # Извлекаем дату и действие
+                
                 date_match = re.search(r'^(\d{4}-\d{2}-\d{2})', line)
                 action_match = re.search(r'ACTION:([^\s]+)', line)
                 
@@ -63,11 +63,11 @@ def parse_log_file(log_file_path):
                     date_str = date_match.group(1)
                     action = action_match.group(1)
                     
-                    # Группируем по базовому действию
+                 
                     base_action = action.split(':')[0] if ':' in action else action
                     command_stats[base_action] += 1
                     
-                    # Увеличиваем счетчик для этой даты
+                    
                     date_stats[date_str] += 1
             except Exception as e:
                 print(f"Ошибка парсинга строки: {line.strip()}. Ошибка: {str(e)}")
@@ -75,115 +75,114 @@ def parse_log_file(log_file_path):
     return command_stats, date_stats
 
 def plot_command_stats(command_stats, top_n=10):
-    """Строит красивый график топ-N популярных команд"""
-    # Сортируем и переводим команды
+    
+  
     sorted_commands = sorted(command_stats.items(), key=lambda x: x[1], reverse=True)[:top_n]
     commands = [translate_command(cmd) for cmd, _ in sorted_commands]
     counts = [count for _, count in sorted_commands]
     
-    # Создаем фигуру
+
     plt.figure(figsize=(10, 6), dpi=100)
     
     # Создаем горизонтальную бар-диаграмму
     colors = plt.cm.viridis_r(np.linspace(0.2, 0.8, len(commands)))
     bars = plt.barh(commands, counts, color=colors, edgecolor='gray', linewidth=0.7)
     
-    # Настраиваем оформление
-    plt.title('Топ популярных действий', fontsize=16, pad=20)
+
+    plt.title('Самые популярные действий', fontsize=16, pad=20)
     plt.xlabel('Количество использований', fontsize=12)
     plt.ylabel('Действия', fontsize=12)
     
-    # Добавляем сетку
+    
     plt.grid(axis='x', linestyle='--', alpha=0.3)
     
-    # Добавляем значения на столбцы
+
     for bar in bars:
         width = bar.get_width()
         plt.text(width + 0.3, bar.get_y() + bar.get_height()/2,
                 f'{int(width)}',
                 va='center', ha='left', fontsize=10)
     
-    # Улучшаем читаемость
+
     plt.tight_layout()
-    plt.gca().invert_yaxis()  # Чтобы самый популярный был сверху
+    plt.gca().invert_yaxis() 
     
-    # Убираем верхнюю и правую границы
+ 
     plt.gca().spines['top'].set_visible(False)
     plt.gca().spines['right'].set_visible(False)
     
-    # Сохраняем и показываем
+  
     plt.savefig('command_stats_ru.png', dpi=300, bbox_inches='tight', facecolor='white')
     plt.show()
 
 def plot_date_activity(date_stats):
-    """Строит график активности по датам"""
+    
     if not date_stats:
         print("Нет данных по датам для построения графика")
         return
     
-    # Преобразуем строки дат в объекты datetime
+  
     dates = [datetime.strptime(d, '%Y-%m-%d') for d in date_stats.keys()]
     counts = list(date_stats.values())
     
-    # Сортируем по дате
+
     sorted_indices = np.argsort(dates)
     dates_sorted = [dates[i] for i in sorted_indices]
     counts_sorted = [counts[i] for i in sorted_indices]
     
-    # Создаем фигуру
+
     plt.figure(figsize=(12, 5), dpi=100)
     
-    # Создаем линейный график с маркерами
+  
     plt.plot(dates_sorted, counts_sorted, 
              marker='o', linestyle='-', 
              color='#4C72B0', linewidth=2,
              markersize=7, markerfacecolor='#55A868')
-    
-    # Настраиваем оформление
+
     plt.title('Активность пользователей по дням', fontsize=16, pad=20)
     plt.xlabel('Дата', fontsize=12)
     plt.ylabel('Количество действий', fontsize=12)
     plt.grid(True, linestyle='--', alpha=0.3)
     
-    # Форматируем даты
+ 
     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d.%m.%Y'))
     plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
     plt.gcf().autofmt_xdate()  # Наклон подписей дат
     
-    # Добавляем значения над точками
+
     for i, count in enumerate(counts_sorted):
         plt.text(dates_sorted[i], count + 0.1, 
                  str(count), 
                  ha='center', va='bottom',
                  fontsize=9)
     
-    # Убираем верхнюю и правую границы
+ 
     plt.gca().spines['top'].set_visible(False)
     plt.gca().spines['right'].set_visible(False)
     
-    # Сохраняем и показываем
+ 
     plt.tight_layout()
     plt.savefig('date_activity_ru.png', dpi=300, bbox_inches='tight', facecolor='white')
     plt.show()
 
 def generate_stats_report(command_stats, date_stats, output_file='stats_report_ru.txt'):
-    """Генерирует отчет с русскими названиями"""
+   
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write("=== СТАТИСТИКА ИСПОЛЬЗОВАНИЯ БОТА ===\n\n")
         f.write(f"Всего зарегистрированных действий: {sum(command_stats.values())}\n")
         f.write(f"Период анализа: {len(date_stats)} дней\n\n")
         
-        # Топ действий
-        f.write("Топ-10 популярных действий:\n")
+      
+        f.write("Топ популярных действий:\n")
         for cmd, count in sorted(command_stats.items(), key=lambda x: x[1], reverse=True)[:10]:
             f.write(f"- {translate_command(cmd)}: {count} использований\n")
         
-        # Активность по датам
+     
         f.write("\nАктивность по дням:\n")
         for date_str, count in sorted(date_stats.items()):
             f.write(f"- {date_str}: {count} действий\n")
         
-        # Статистика по дням
+       
         avg_per_day = sum(date_stats.values()) / len(date_stats) if date_stats else 0
         max_day = max(date_stats.values()) if date_stats else 0
         min_day = min(date_stats.values()) if date_stats else 0
@@ -195,17 +194,17 @@ def main():
     log_file = 'bot_commands.log'
     
     try:
-        # Анализируем логи
+     
         command_stats, date_stats = parse_log_file(log_file)
         
         if not command_stats:
             print("В логах не найдено данных о командах")
             return
         
-        # Генерируем отчет
+       
         generate_stats_report(command_stats, date_stats)
         
-        # Строим графики
+    
         plot_command_stats(command_stats)
         plot_date_activity(date_stats)
         
