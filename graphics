@@ -3,192 +3,125 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from datetime import datetime
-COMMAND_TRANSLATIONS.update({
-    # Основные команды
+
+# Словарь для перевода названий команд
+COMMAND_TRANSLATIONS = {
     '/start': 'Запуск бота',
     '/help': 'Помощь',
-    '/stats': 'Просмотр статистики',
-    
-    # Действия с файлами
+    '/stats': 'Статистика',
+    'select_docx_to_tex': 'Выбрано: DOCX→LaTeX',
+    'select_tex_to_docx': 'Выбрано: LaTeX→DOCX',
+    'menu_work_with_files': 'Меню: Работа с файлами',
+    'menu_help': 'Меню: Помощь',
+    'menu_settings': 'Меню: Настройки',
+    'enable_echo_mode': 'Включён эхо-режим',
     'upload_docx': 'Загрузка DOCX',
     'upload_tex': 'Загрузка LaTeX',
     'upload_text': 'Загрузка текста',
-    'upload_unsupported_format': 'Неподдерживаемый формат',
-    'conversion_docx_to_tex_success': 'Конвертация DOCX→LaTeX',
-    'conversion_tex_to_docx_success': 'Конвертация LaTeX→DOCX',
+    'conversion_docx_to_tex_success': 'Успех: DOCX→LaTeX',
+    'conversion_tex_to_docx_success': 'Успех: LaTeX→DOCX',
+    'echo_message': 'Эхо-сообщение',
     'conversion_error': 'Ошибка конвертации',
-    
-    # Меню и выбор
-    'select_docx_to_tex': 'Выбрано DOCX→LaTeX',
-    'select_tex_to_docx': 'Выбрано LaTeX→DOCX',
-    'menu_work_with_files': 'Открыто меню файлов',
-    'menu_help': 'Открыта справка',
-    'menu_settings': 'Открыты настройки',
-    
-    # Эхо-режим
-    'enable_echo_mode': 'Включён эхо-режим',
-    'disable_echo_mode': 'Выключен эхо-режим',
-    'echo_message': 'Повтор сообщения',
-    
-    # Системные события
-    'bot_started': 'Бот запущен',
-    'bot_stopped': 'Бот остановлен',
-    'handler_error': 'Ошибка обработки',
-    'pandoc_error': 'Ошибка Pandoc',
-    
-    # Дополнительные действия
-    'file_downloaded': 'Файл загружен',
-    'file_converted': 'Файл сконвертирован',
-    'file_sent': 'Файл отправлен',
-    'user_blocked': 'Пользователь заблокирован',
-    'admin_command': 'Команда администратора'
-})
+    'upload_unsupported_format': 'Неподдерж. формат'
+}
 
 def translate_command(command):
     """Переводит техническое название команды в читаемое"""
-    return COMMAND_TRANSLATIONS.get(command, command)
+    # Извлекаем базовое название действия до двоеточия
+    base_action = command.split(':')[0] if ':' in command else command
+    return COMMAND_TRANSLATIONS.get(base_action, base_action)
+
 def parse_log_file(log_file_path):
     """Парсит файл логов и извлекает статистику команд"""
     command_stats = defaultdict(int)
-    user_stats = defaultdict(lambda: defaultdict(int))
-    date_stats = defaultdict(lambda: defaultdict(int))
     
     with open(log_file_path, 'r', encoding='utf-8') as f:
         for line in f:
-            # Парсим строку лога
             if 'ACTION:' not in line:
                 continue
                 
             try:
-                # Извлекаем user_id и action
-                user_match = re.search(r'USER:(\d+)', line)
+                # Извлекаем полное действие
                 action_match = re.search(r'ACTION:([^\s]+)', line)
-                time_match = re.search(r'^(\d{4}-\d{2}-\d{2})', line)
-                
-                if not all([user_match, action_match, time_match]):
-                    continue
-                    
-                user_id = user_match.group(1)
-                action = action_match.group(1)
-                date = time_match.group(1)
-                
-                # Обновляем статистику
-                command_stats[action] += 1
-                user_stats[user_id][action] += 1
-                date_stats[date][action] += 1
-                
+                if action_match:
+                    action = action_match.group(1)
+                    # Группируем по базовому действию
+                    base_action = action.split(':')[0] if ':' in action else action
+                    command_stats[base_action] += 1
             except Exception as e:
                 print(f"Ошибка парсинга строки: {line.strip()}. Ошибка: {str(e)}")
     
-    return command_stats, user_stats, date_stats
+    return command_stats
 
 def plot_command_stats(command_stats, top_n=10):
-    """Строит график топ-N популярных команд"""
-    # Сортируем команды по популярности
+    """Строит красивый график топ-N популярных команд"""
+    # Сортируем и переводим команды
     sorted_commands = sorted(command_stats.items(), key=lambda x: x[1], reverse=True)[:top_n]
-    commands, counts = zip(*sorted_commands)
+    commands = [translate_command(cmd) for cmd, _ in sorted_commands]
+    counts = [count for _, count in sorted_commands]
     
-    # Настраиваем стиль графика
-    plt.style.use('ggplot')
-    plt.figure(figsize=(12, 6))
+    # Настраиваем стиль
+    plt.style.use('seaborn-whitegrid')
+    plt.figure(figsize=(10, 6), dpi=100)
     
-    # Создаем столбчатую диаграмму
-    bars = plt.bar(commands, counts, color='skyblue')
+    # Создаем горизонтальную бар-диаграмму
+    colors = plt.cm.tab10(range(len(commands)))
+    bars = plt.barh(commands, counts, color=colors)
     
-    # Добавляем подписи
-    plt.title(f'Топ-{top_n} популярных команд', fontsize=14)
-    plt.xlabel('Команды', fontsize=12)
-    plt.ylabel('Количество использований', fontsize=12)
-    plt.xticks(rotation=45, ha='right')
+    # Добавляем оформление
+    plt.title('Топ популярных действий в боте', fontsize=16, pad=20)
+    plt.xlabel('Количество использований', fontsize=12)
+    plt.ylabel('Действия', fontsize=12)
+    plt.grid(axis='x', linestyle='--', alpha=0.7)
     
     # Добавляем значения на столбцы
     for bar in bars:
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height,
-                f'{int(height)}',
-                ha='center', va='bottom')
+        width = bar.get_width()
+        plt.text(width + 0.3, bar.get_y() + bar.get_height()/2,
+                f'{int(width)}',
+                va='center', ha='left', fontsize=10)
     
-    # Настраиваем внешний вид
+    # Улучшаем читаемость
     plt.tight_layout()
+    plt.gca().invert_yaxis()  # Чтобы самый популярный был сверху
     
-    # Сохраняем и показываем график
-    plt.savefig('command_stats.png', dpi=300, bbox_inches='tight')
+    # Сохраняем и показываем
+    plt.savefig('command_stats_ru.png', dpi=300, bbox_inches='tight', facecolor='white')
     plt.show()
 
-def plot_daily_activity(date_stats):
-    """Строит график активности по дням"""
-    # Подготавливаем данные
-    dates = sorted(date_stats.keys())
-    daily_counts = [sum(date_stats[date].values()) for date in dates]
-    
-    # Создаем график
-    plt.figure(figsize=(12, 6))
-    plt.plot(dates, daily_counts, marker='o', linestyle='-', color='steelblue')
-    
-    # Настраиваем подписи
-    plt.title('Активность пользователей по дням', fontsize=14)
-    plt.xlabel('Дата', fontsize=12)
-    plt.ylabel('Количество действий', fontsize=12)
-    plt.xticks(rotation=45)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    
-    # Сохраняем и показываем график
-    plt.tight_layout()
-    plt.savefig('daily_activity.png', dpi=300, bbox_inches='tight')
-    plt.show()
-
-def generate_stats_report(command_stats, user_stats, date_stats, output_file='stats_report.txt'):
-    """Генерирует текстовый отчет со статистикой"""
-    total_commands = sum(command_stats.values())
-    total_users = len(user_stats)
-    
+def generate_stats_report(command_stats, output_file='stats_report_ru.txt'):
+    """Генерирует отчет с русскими названиями"""
     with open(output_file, 'w', encoding='utf-8') as f:
-        f.write("=== ОТЧЕТ ПО СТАТИСТИКЕ БОТА ===\n\n")
-        f.write(f"Всего команд обработано: {total_commands}\n")
-        f.write(f"Всего уникальных пользователей: {total_users}\n\n")
+        f.write("=== СТАТИСТИКА ИСПОЛЬЗОВАНИЯ БОТА ===\n\n")
+        f.write(f"Всего зарегистрированных действий: {sum(command_stats.values())}\n\n")
         
-        f.write("Топ-10 популярных команд:\n")
+        f.write("Топ-10 популярных действий:\n")
         for cmd, count in sorted(command_stats.items(), key=lambda x: x[1], reverse=True)[:10]:
-            f.write(f"- {cmd}: {count} использований\n")
-        
-        f.write("\nСамые активные пользователи:\n")
-        top_users = sorted(user_stats.items(), 
-                         key=lambda x: sum(x[1].values()), 
-                         reverse=True)[:5]
-        for user_id, actions in top_users:
-            f.write(f"- Пользователь {user_id}: {sum(actions.values())} действий\n")
-        
-        f.write("\nАктивность по дням:\n")
-        for date in sorted(date_stats.keys()):
-            f.write(f"- {date}: {sum(date_stats[date].values())} действий\n")
+            f.write(f"- {translate_command(cmd)}: {count} использований\n")
 
 def main():
     log_file = 'bot_commands.log'
     
     try:
-        # Парсим логи
-        command_stats, user_stats, date_stats = parse_log_file(log_file)
+        # Анализируем логи
+        command_stats = parse_log_file(log_file)
         
         if not command_stats:
             print("В логах не найдено данных о командах")
             return
         
-        # Генерируем отчет
-        generate_stats_report(command_stats, user_stats, date_stats)
-        
-        # Строим графики
+        # Генерируем отчет и графики
+        generate_stats_report(command_stats)
         plot_command_stats(command_stats)
-        plot_daily_activity(date_stats)
         
-        print("Анализ завершен. Результаты сохранены в файлы:")
-        print("- command_stats.png (график популярных команд)")
-        print("- daily_activity.png (график активности по дням)")
-        print("- stats_report.txt (текстовый отчет)")
+        print("Анализ завершен. Результаты сохранены в:")
+        print("- command_stats_ru.png (график с русскими подписями)")
+        print("- stats_report_ru.txt (отчет на русском)")
         
     except FileNotFoundError:
-        print(f"Файл логов {log_file} не найден")
+        print(f"Ошибка: файл логов {log_file} не найден")
     except Exception as e:
-        print(f"Ошибка при анализе логов: {str(e)}")
+        print(f"Ошибка при анализе: {str(e)}")
 
 if __name__ == '__main__':
     main()
