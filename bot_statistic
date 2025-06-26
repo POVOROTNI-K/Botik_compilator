@@ -1,5 +1,8 @@
 import os
 import logging
+from collections import defaultdict
+from datetime import datetime
+
 import tempfile
 import asyncio
 import zipfile
@@ -24,7 +27,8 @@ from telegram.ext import (
 )
 
 # Настройки
-TOKEN = "<ВАШ_ТОКЕН_ЗДЕСЬ>"
+TOKEN = "8029314491:AAFiFXIBkWPUaf8Up1zFkDpsRTNc5v9UiCg"
+# Настройка логгера
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - USER:%(user_id)s - COMMAND:%(command)s',
     handlers=[
@@ -36,7 +40,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Главное меню
+command_stats = defaultdict(int)
+user_activity = defaultdict(lambda: defaultdict(int))
 
+def log_action(user_id: int, action: str):
+    """Логирует действие пользователя и обновляет статистику"""
+    logger.info(
+        "User action",
+        extra={'user_id': user_id, 'action': action}
+    )
+    command_stats[action] += 1
+    user_activity[user_id][action] += 1
 def main_menu_keyboard():
     return ReplyKeyboardMarkup([
         ["\U0001F4C4 Работа с файлами", "\u2139\ufe0f Помощь"],
@@ -55,10 +69,7 @@ user_stats = defaultdict(lambda: defaultdict(int))
 
 async def start(update: Update, context: CallbackContext):
     user = update.effective_user
-    logger.info(
-        "User used command",
-        extra={'user_id': user.id, 'command': '/start'}
-    )
+    log_action(user.id, '/start')
     await update.message.reply_text(
         f"Привет, {user.first_name}! Я бот для конвертации файлов между LaTeX и DOCX.",
         reply_markup=main_menu_keyboard()
@@ -66,7 +77,7 @@ async def start(update: Update, context: CallbackContext):
 
 async def help_command(update: Update, context: CallbackContext):
     user = update.effective_user
-    log_user_action(user.id, "help")
+    log_action(user.id, '/help')
     await update.message.reply_text(
         "\U0001F4CC Используйте кнопки меню для навигации:\n"
         "• \U0001F4C4 Работа с файлами - преобразование документов\n"
@@ -77,57 +88,69 @@ async def help_command(update: Update, context: CallbackContext):
 
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    user_id = query.from_user.id
+    user = query.from_user
     await query.answer()
+    
     if query.data == "docx_to_tex":
         context.user_data['conversion'] = 'docx_to_tex'
-        log_user_action(user_id, "select_docx_to_tex")
+        log_action(user.id, 'select_docx_to_tex')
         await query.edit_message_text("\U0001F4E4 Отправьте DOCX файл для конвертации в LaTeX")
     elif query.data == "tex_to_docx":
         context.user_data['conversion'] = 'tex_to_docx'
-        log_user_action(user_id, "select_tex_to_docx")
+        log_action(user.id, 'select_tex_to_docx')
         await query.edit_message_text("\U0001F4E4 Отправьте LaTeX файл (.tex) для конвертации в DOCX")
 
 async def handle_text(update: Update, context: CallbackContext):
     text = update.message.text
     user = update.effective_user
-    user_id = user.id
-    log_user_action(user_id, f"text_input: {text}")
-
+    
     if text == "\U0001F4C4 Работа с файлами":
+        log_action(user.id, 'menu_work_with_files')
         await update.message.reply_text(
             "\U0001F527 Выберите тип конвертации:",
             reply_markup=conversion_menu_keyboard()
         )
     elif text == "\u2139\ufe0f Помощь":
+        log_action(user.id, 'menu_help')
         await help_command(update, context)
     elif text == "\U0001F501 Эхо-режим":
         context.user_data['echo'] = True
+        log_action(user.id, 'enable_echo')
         await update.message.reply_text("Эхо-режим активирован \U0001F501")
     elif text == "\u2699\ufe0f Настройки":
+        log_action(user.id, 'menu_settings')
         await update.message.reply_text("\u2699\ufe0f Текущие настройки:\n- Формат логов: TEXT\n- Кодировка: UTF-8")
     else:
         if context.user_data.get('echo'):
+            log_action(user.id, 'echo_message')
             await update.message.reply_text(f"\U0001F501 Эхо: {text}")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     user = update.effective_user
-    user_id = user.id
     file_ext = os.path.splitext(doc.file_name)[1].lower() if doc.file_name else ''
     conversion_type = context.user_data.get('conversion')
-    log_user_action(user_id, f"upload_file: {doc.file_name}")
 
     try:
         if conversion_type == 'docx_to_tex' or file_ext == '.docx':
+            log_action(user.id, 'upload_docx')
             await process_docx_to_tex(update, doc)
-            log_user_action(user_id, "converted_docx_to_tex")
+            log_action(user.id, 'conversion_success_docx_to_tex')
         elif conversion_type == 'tex_to_docx' or file_ext == '.tex':
+            log_action(user.id, 'upload_tex')
             await process_tex_to_docx(update, doc)
-            log_user_action(user_id, "converted_tex_to_docx")
+            log_action(user.id, 'conversion_success_tex_to_docx')
+        elif doc.mime_type.startswith("text"):
+            log_action(user.id, 'upload_text')
+            await process_text_file(update, doc)
         else:
-            await update.message.reply_text("❌ Неподдерживаемый формат файла!")
-            log_user_action(user_id, "file_format_error")
+            log_action(user.id, 'upload_unsupported_format')
+            raise ValueError("❌ Неподдерживаемый формат файла!")
+
+    except Exception as e:
+        log_action(user.id, f'conversion_error: {str(e)}')
+        logger.error(f"Ошибка обработки файла: {str(e)}")
+        await update.message.reply_text(f"⚠️ Ошибка: {str(e)}")
     finally:
         context.user_data.pop('conversion', None)
 
@@ -300,7 +323,18 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
             chat_id=update.effective_chat.id,
             text="⚠️ Произошла ошибка при обработке запроса"
         )
-
+def generate_stats_report():
+    """Генерирует текстовый отчет по статистике"""
+    report = [
+        "📊 Статистика использования бота:",
+        f"📅 Всего команд обработано: {sum(command_stats.values())}",
+        "🔝 Топ-5 команд:"
+    ]
+    
+    for cmd, count in sorted(command_stats.items(), key=lambda x: x[1], reverse=True)[:5]:
+        report.append(f"- {cmd}: {count} использований")
+    
+    return "\n".join(report)
 def main():
     application = Application.builder().token(TOKEN).build()
 
