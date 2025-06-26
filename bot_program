@@ -27,7 +27,7 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
-# Настройки
+
 TOKEN = "8029314491:AAFiFXIBkWPUaf8Up1zFkDpsRTNc5v9UiCg"
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -42,7 +42,7 @@ try:
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
         logger.info(f"Tesseract найден: {tesseract_path}")
     else:
-        # Стандартные пути
+     
         possible_paths = [
             '/opt/homebrew/bin/tesseract',    # macOS Apple Silicon
             '/usr/local/bin/tesseract',        # macOS Intel
