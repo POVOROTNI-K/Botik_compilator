@@ -26,8 +26,11 @@ from telegram.ext import (
 # Настройки
 TOKEN = "<ВАШ_ТОКЕН_ЗДЕСЬ>"
 logging.basicConfig(
-    filename="user_stats.log",
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format='%(asctime)s - %(levelname)s - USER:%(user_id)s - COMMAND:%(command)s',
+    handlers=[
+        logging.FileHandler('bot_commands.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ],
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
@@ -52,7 +55,10 @@ user_stats = defaultdict(lambda: defaultdict(int))
 
 async def start(update: Update, context: CallbackContext):
     user = update.effective_user
-    log_user_action(user.id, "start")
+    logger.info(
+        "User used command",
+        extra={'user_id': user.id, 'command': '/start'}
+    )
     await update.message.reply_text(
         f"Привет, {user.first_name}! Я бот для конвертации файлов между LaTeX и DOCX.",
         reply_markup=main_menu_keyboard()
