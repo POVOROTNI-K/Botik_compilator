@@ -1,42 +1,57 @@
 import pandas as pd
+import chardet
 import matplotlib.pyplot as plt
-import re
 
-# Чтение логов в DataFrame
-df = pd.read_csv(
-    "bot.log",
-    sep=" - ",
-    names=["Time", "Module", "Level", "Message"],
-    engine="python"
-)
+# Определяем кодировку
+def get_encoding(file_path):
+    with open(file_path, 'rb') as f:
+        return chardet.detect(f.read())['encoding']
 
-# Извлекаем команды (шаблон: "used /command")
-df["Command"] = df["Message"].str.extract(r"used (/\w+)")
+encoding = get_encoding("bot.log")
 
-# Считаем частоту команд
-command_counts = df["Command"].value_counts().head(10)  # Топ-10 команд
+# Чтение с обработкой ошибок
+try:
+    df = pd.read_csv(
+        "bot.log",
+        sep=" - ",
+        names=["Time", "Module", "Level", "Message"],
+        encoding=encoding,
+        engine="python",
+        on_bad_lines='warn'  # Пропускать проблемные строки с предупреждением
+    )
+except UnicodeDecodeError:
+    # Если основной метод не сработал, пробуем 'utf-8-sig' или 'cp1251'
+    df = pd.read_csv("bot.log", sep=" - ", names=["Time", "Module", "Level", "Message"], 
+                    encoding='utf-8-sig', engine="python")
 
-# Если команд нет (NaN), заменяем на "Unknown"
-command_counts = command_counts.fillna("Unknown")
-
-print(command_counts)
-plt.style.use("ggplot")
-
-# Создаём график
-command_counts.plot(
-    kind="bar",
-    color="skyblue",
-    edgecolor="black",
-    figsize=(10, 6),
-    title="Топ популярных команд",
-    xlabel="Команда",
-    ylabel="Количество использований"
-)
-
-# Добавляем подписи значений
-for i, count in enumerate(command_counts):
-    plt.text(i, count + 1, str(count), ha="center")
-
-# Сохраняем график
-plt.savefig("commands_stats.png", bbox_inches="tight")
-plt.show()
+# Дальнейший анализ
+if not df.empty:
+    # Извлекаем команды
+    df["Command"] = df["Message"].str.extract(r"used (/\w+)")
+    command_counts = df["Command"].value_counts().head(10)  # Топ-10 команд
+    
+    # Строим график
+    plt.figure(figsize=(12, 6))
+    bars = plt.bar(command_counts.index, command_counts.values, color='skyblue')
+    
+    # Добавляем подписи
+    plt.title('Топ популярных команд', fontsize=15)
+    plt.xlabel('Команды', fontsize=12)
+    plt.ylabel('Количество использований', fontsize=12)
+    plt.xticks(rotation=45, ha='right')  # Поворачиваем подписи для читаемости
+    
+    # Добавляем значения на столбцы
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height,
+                f'{int(height)}',
+                ha='center', va='bottom')
+    
+    plt.tight_layout()  # Чтобы подписи не обрезались
+    plt.savefig('command_stats.png', dpi=300, bbox_inches='tight')  # Сохраняем график
+    plt.show()  # Показываем график
+    
+    print("Топ команд:")
+    print(command_counts)
+else:
+    print("Файл логов пуст или не удалось его прочитать.")
