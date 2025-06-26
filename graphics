@@ -3,23 +3,34 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from datetime import datetime
+import matplotlib.font_manager as fm
+
+# Подгружаем шрифт для поддержки русского языка
+try:
+    font_path = 'arial.ttf'  # Попробуем использовать Arial
+    font_prop = fm.FontProperties(fname=font_path)
+    plt.rcParams['font.family'] = font_prop.get_name()
+except:
+    # Если шрифт не найден, используем стандартный
+    plt.rcParams['font.family'] = 'Arial'
+    print("Шрифт Arial не найден, используем стандартный")
 
 # Словарь для перевода названий команд
 COMMAND_TRANSLATIONS = {
     '/start': 'Запуск бота',
     '/help': 'Помощь',
     '/stats': 'Статистика',
-    'select_docx_to_tex': 'Выбрано: DOCX→LaTeX',
-    'select_tex_to_docx': 'Выбрано: LaTeX→DOCX',
-    'menu_work_with_files': 'Меню: Работа с файлами',
+    'select_docx_to_tex': 'Выбор DOCX→LaTeX',
+    'select_tex_to_docx': 'Выбор LaTeX→DOCX',
+    'menu_work_with_files': 'Меню: Файлы',
     'menu_help': 'Меню: Помощь',
     'menu_settings': 'Меню: Настройки',
-    'enable_echo_mode': 'Включён эхо-режим',
+    'enable_echo_mode': 'Вкл. эхо-режим',
     'upload_docx': 'Загрузка DOCX',
     'upload_tex': 'Загрузка LaTeX',
     'upload_text': 'Загрузка текста',
-    'conversion_docx_to_tex_success': 'Успех: DOCX→LaTeX',
-    'conversion_tex_to_docx_success': 'Успех: LaTeX→DOCX',
+    'conversion_docx_to_tex_success': 'Конвертация DOCX→LaTeX',
+    'conversion_tex_to_docx_success': 'Конвертация LaTeX→DOCX',
     'echo_message': 'Эхо-сообщение',
     'conversion_error': 'Ошибка конвертации',
     'upload_unsupported_format': 'Неподдерж. формат'
@@ -60,19 +71,20 @@ def plot_command_stats(command_stats, top_n=10):
     commands = [translate_command(cmd) for cmd, _ in sorted_commands]
     counts = [count for _, count in sorted_commands]
     
-    # Настраиваем стиль
-    plt.style.use('seaborn-whitegrid')
+    # Создаем фигуру с настроенным стилем
     plt.figure(figsize=(10, 6), dpi=100)
     
     # Создаем горизонтальную бар-диаграмму
-    colors = plt.cm.tab10(range(len(commands)))
-    bars = plt.barh(commands, counts, color=colors)
+    colors = plt.cm.viridis_r([x / top_n for x in range(top_n)])
+    bars = plt.barh(commands, counts, color=colors, edgecolor='gray', linewidth=0.7)
     
-    # Добавляем оформление
-    plt.title('Топ популярных действий в боте', fontsize=16, pad=20)
+    # Настраиваем оформление
+    plt.title('Топ популярных действий', fontsize=16, pad=20)
     plt.xlabel('Количество использований', fontsize=12)
     plt.ylabel('Действия', fontsize=12)
-    plt.grid(axis='x', linestyle='--', alpha=0.7)
+    
+    # Добавляем сетку
+    plt.grid(axis='x', linestyle='--', alpha=0.3)
     
     # Добавляем значения на столбцы
     for bar in bars:
@@ -84,6 +96,10 @@ def plot_command_stats(command_stats, top_n=10):
     # Улучшаем читаемость
     plt.tight_layout()
     plt.gca().invert_yaxis()  # Чтобы самый популярный был сверху
+    
+    # Убираем верхнюю и правую границы
+    plt.gca().spines['top'].set_visible(False)
+    plt.gca().spines['right'].set_visible(False)
     
     # Сохраняем и показываем
     plt.savefig('command_stats_ru.png', dpi=300, bbox_inches='tight', facecolor='white')
