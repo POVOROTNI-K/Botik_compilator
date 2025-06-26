@@ -1,44 +1,62 @@
+import re
 import pandas as pd
-import chardet
 import matplotlib.pyplot as plt
+from collections import defaultdict
+from datetime import datetime
 
-# Определяем кодировку
-def get_encoding(file_path):
-    with open(file_path, 'rb') as f:
-        return chardet.detect(f.read())['encoding']
-
-encoding = get_encoding("bot.log")
-
-# Чтение с обработкой ошибок
-try:
-    df = pd.read_csv(
-        "bot.log",
-        sep=" - ",
-        names=["Time", "Module", "Level", "Message"],
-        encoding=encoding,
-        engine="python",
-        on_bad_lines='warn'  # Пропускать проблемные строки с предупреждением
-    )
-except UnicodeDecodeError:
-    # Если основной метод не сработал, пробуем 'utf-8-sig' или 'cp1251'
-    df = pd.read_csv("bot.log", sep=" - ", names=["Time", "Module", "Level", "Message"], 
-                    encoding='utf-8-sig', engine="python")
-
-# Дальнейший анализ
-if not df.empty:
-    # Извлекаем команды
-    df["Command"] = df["Message"].str.extract(r"used (/\w+)")
-    command_counts = df["Command"].value_counts().head(10)  # Топ-10 команд
+def parse_log_file(log_file_path):
+    """Парсит файл логов и извлекает статистику команд"""
+    command_stats = defaultdict(int)
+    user_stats = defaultdict(lambda: defaultdict(int))
+    date_stats = defaultdict(lambda: defaultdict(int))
     
-    # Строим график
+    with open(log_file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            # Парсим строку лога
+            if 'ACTION:' not in line:
+                continue
+                
+            try:
+                # Извлекаем user_id и action
+                user_match = re.search(r'USER:(\d+)', line)
+                action_match = re.search(r'ACTION:([^\s]+)', line)
+                time_match = re.search(r'^(\d{4}-\d{2}-\d{2})', line)
+                
+                if not all([user_match, action_match, time_match]):
+                    continue
+                    
+                user_id = user_match.group(1)
+                action = action_match.group(1)
+                date = time_match.group(1)
+                
+                # Обновляем статистику
+                command_stats[action] += 1
+                user_stats[user_id][action] += 1
+                date_stats[date][action] += 1
+                
+            except Exception as e:
+                print(f"Ошибка парсинга строки: {line.strip()}. Ошибка: {str(e)}")
+    
+    return command_stats, user_stats, date_stats
+
+def plot_command_stats(command_stats, top_n=10):
+    """Строит график топ-N популярных команд"""
+    # Сортируем команды по популярности
+    sorted_commands = sorted(command_stats.items(), key=lambda x: x[1], reverse=True)[:top_n]
+    commands, counts = zip(*sorted_commands)
+    
+    # Настраиваем стиль графика
+    plt.style.use('ggplot')
     plt.figure(figsize=(12, 6))
-    bars = plt.bar(command_counts.index, command_counts.values, color='skyblue')
+    
+    # Создаем столбчатую диаграмму
+    bars = plt.bar(commands, counts, color='skyblue')
     
     # Добавляем подписи
-    plt.title('Топ популярных команд', fontsize=15)
+    plt.title(f'Топ-{top_n} популярных команд', fontsize=14)
     plt.xlabel('Команды', fontsize=12)
     plt.ylabel('Количество использований', fontsize=12)
-    plt.xticks(rotation=45, ha='right')  # Поворачиваем подписи для читаемости
+    plt.xticks(rotation=45, ha='right')
     
     # Добавляем значения на столбцы
     for bar in bars:
@@ -47,11 +65,87 @@ if not df.empty:
                 f'{int(height)}',
                 ha='center', va='bottom')
     
-    plt.tight_layout()  # Чтобы подписи не обрезались
-    plt.savefig('command_stats.png', dpi=300, bbox_inches='tight')  # Сохраняем график
-    plt.show()  # Показываем график
+    # Настраиваем внешний вид
+    plt.tight_layout()
     
-    print("Топ команд:")
-    print(command_counts)
-else:
-    print("Файл логов пуст или не удалось его прочитать.")
+    # Сохраняем и показываем график
+    plt.savefig('command_stats.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
+def plot_daily_activity(date_stats):
+    """Строит график активности по дням"""
+    # Подготавливаем данные
+    dates = sorted(date_stats.keys())
+    daily_counts = [sum(date_stats[date].values()) for date in dates]
+    
+    # Создаем график
+    plt.figure(figsize=(12, 6))
+    plt.plot(dates, daily_counts, marker='o', linestyle='-', color='steelblue')
+    
+    # Настраиваем подписи
+    plt.title('Активность пользователей по дням', fontsize=14)
+    plt.xlabel('Дата', fontsize=12)
+    plt.ylabel('Количество действий', fontsize=12)
+    plt.xticks(rotation=45)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    # Сохраняем и показываем график
+    plt.tight_layout()
+    plt.savefig('daily_activity.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
+def generate_stats_report(command_stats, user_stats, date_stats, output_file='stats_report.txt'):
+    """Генерирует текстовый отчет со статистикой"""
+    total_commands = sum(command_stats.values())
+    total_users = len(user_stats)
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("=== ОТЧЕТ ПО СТАТИСТИКЕ БОТА ===\n\n")
+        f.write(f"Всего команд обработано: {total_commands}\n")
+        f.write(f"Всего уникальных пользователей: {total_users}\n\n")
+        
+        f.write("Топ-10 популярных команд:\n")
+        for cmd, count in sorted(command_stats.items(), key=lambda x: x[1], reverse=True)[:10]:
+            f.write(f"- {cmd}: {count} использований\n")
+        
+        f.write("\nСамые активные пользователи:\n")
+        top_users = sorted(user_stats.items(), 
+                         key=lambda x: sum(x[1].values()), 
+                         reverse=True)[:5]
+        for user_id, actions in top_users:
+            f.write(f"- Пользователь {user_id}: {sum(actions.values())} действий\n")
+        
+        f.write("\nАктивность по дням:\n")
+        for date in sorted(date_stats.keys()):
+            f.write(f"- {date}: {sum(date_stats[date].values())} действий\n")
+
+def main():
+    log_file = 'bot_commands.log'
+    
+    try:
+        # Парсим логи
+        command_stats, user_stats, date_stats = parse_log_file(log_file)
+        
+        if not command_stats:
+            print("В логах не найдено данных о командах")
+            return
+        
+        # Генерируем отчет
+        generate_stats_report(command_stats, user_stats, date_stats)
+        
+        # Строим графики
+        plot_command_stats(command_stats)
+        plot_daily_activity(date_stats)
+        
+        print("Анализ завершен. Результаты сохранены в файлы:")
+        print("- command_stats.png (график популярных команд)")
+        print("- daily_activity.png (график активности по дням)")
+        print("- stats_report.txt (текстовый отчет)")
+        
+    except FileNotFoundError:
+        print(f"Файл логов {log_file} не найден")
+    except Exception as e:
+        print(f"Ошибка при анализе логов: {str(e)}")
+
+if __name__ == '__main__':
+    main()
