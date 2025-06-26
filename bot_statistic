@@ -1,0 +1,317 @@
+import os
+import logging
+import tempfile
+import asyncio
+import zipfile
+import pypandoc
+from collections import defaultdict
+from datetime import datetime
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputFile,
+    ReplyKeyboardMarkup
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackContext,
+    CallbackQueryHandler,
+    filters,
+    ContextTypes
+)
+
+# Настройки
+TOKEN = "<ВАШ_ТОКЕН_ЗДЕСЬ>"
+logging.basicConfig(
+    filename="user_stats.log",
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Главное меню
+
+def main_menu_keyboard():
+    return ReplyKeyboardMarkup([
+        ["\U0001F4C4 Работа с файлами", "\u2139\ufe0f Помощь"],
+        ["\U0001F501 Эхо-режим", "\u2699\ufe0f Настройки"]
+    ], resize_keyboard=True)
+
+# Меню выбора конвертации
+def conversion_menu_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("DOCX \u27A1 LaTeX", callback_data="docx_to_tex")],
+        [InlineKeyboardButton("LaTeX \u27A1 DOCX", callback_data="tex_to_docx")]
+    ])
+
+# Хранилище статистики (в оперативной памяти, можно вынести в базу)
+user_stats = defaultdict(lambda: defaultdict(int))
+
+async def start(update: Update, context: CallbackContext):
+    user = update.effective_user
+    log_user_action(user.id, "start")
+    await update.message.reply_text(
+        f"Привет, {user.first_name}! Я бот для конвертации файлов между LaTeX и DOCX.",
+        reply_markup=main_menu_keyboard()
+    )
+
+async def help_command(update: Update, context: CallbackContext):
+    user = update.effective_user
+    log_user_action(user.id, "help")
+    await update.message.reply_text(
+        "\U0001F4CC Используйте кнопки меню для навигации:\n"
+        "• \U0001F4C4 Работа с файлами - преобразование документов\n"
+        "• \u2139\ufe0f Помощь - это сообщение\n"
+        "• \U0001F501 Эхо-режим - повторение ваших сообщений\n"
+        "• \u2699\ufe0f Настройки - параметры бота"
+    )
+
+async def button_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    if query.data == "docx_to_tex":
+        context.user_data['conversion'] = 'docx_to_tex'
+        log_user_action(user_id, "select_docx_to_tex")
+        await query.edit_message_text("\U0001F4E4 Отправьте DOCX файл для конвертации в LaTeX")
+    elif query.data == "tex_to_docx":
+        context.user_data['conversion'] = 'tex_to_docx'
+        log_user_action(user_id, "select_tex_to_docx")
+        await query.edit_message_text("\U0001F4E4 Отправьте LaTeX файл (.tex) для конвертации в DOCX")
+
+async def handle_text(update: Update, context: CallbackContext):
+    text = update.message.text
+    user = update.effective_user
+    user_id = user.id
+    log_user_action(user_id, f"text_input: {text}")
+
+    if text == "\U0001F4C4 Работа с файлами":
+        await update.message.reply_text(
+            "\U0001F527 Выберите тип конвертации:",
+            reply_markup=conversion_menu_keyboard()
+        )
+    elif text == "\u2139\ufe0f Помощь":
+        await help_command(update, context)
+    elif text == "\U0001F501 Эхо-режим":
+        context.user_data['echo'] = True
+        await update.message.reply_text("Эхо-режим активирован \U0001F501")
+    elif text == "\u2699\ufe0f Настройки":
+        await update.message.reply_text("\u2699\ufe0f Текущие настройки:\n- Формат логов: TEXT\n- Кодировка: UTF-8")
+    else:
+        if context.user_data.get('echo'):
+            await update.message.reply_text(f"\U0001F501 Эхо: {text}")
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    user = update.effective_user
+    user_id = user.id
+    file_ext = os.path.splitext(doc.file_name)[1].lower() if doc.file_name else ''
+    conversion_type = context.user_data.get('conversion')
+    log_user_action(user_id, f"upload_file: {doc.file_name}")
+
+    try:
+        if conversion_type == 'docx_to_tex' or file_ext == '.docx':
+            await process_docx_to_tex(update, doc)
+            log_user_action(user_id, "converted_docx_to_tex")
+        elif conversion_type == 'tex_to_docx' or file_ext == '.tex':
+            await process_tex_to_docx(update, doc)
+            log_user_action(user_id, "converted_tex_to_docx")
+        else:
+            await update.message.reply_text("❌ Неподдерживаемый формат файла!")
+            log_user_action(user_id, "file_format_error")
+    finally:
+        context.user_data.pop('conversion', None)
+
+# Логирование действий пользователя в файл
+def log_user_action(user_id: int, action: str):
+    timestamp = datetime.now().isoformat()
+    logger.info(f"user_id={user_id}, action={action}, time={timestamp}")
+    user_stats[user_id][action] += 1
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    user = update.effective_user
+    file_ext = os.path.splitext(doc.file_name)[1].lower() if doc.file_name else ''
+    conversion_type = context.user_data.get('conversion')
+
+    try:
+        # Определение типа конвертации
+        if conversion_type == 'docx_to_tex' or file_ext == '.docx':
+            await process_docx_to_tex(update, doc)
+        elif conversion_type == 'tex_to_docx' or file_ext == '.tex':
+            await process_tex_to_docx(update, doc)
+        elif doc.mime_type.startswith("text"):
+            await process_text_file(update, doc)
+        else:
+            raise ValueError("❌ Неподдерживаемый формат файла!")
+
+    except Exception as e:
+        logger.error(f"Ошибка обработки файла: {str(e)}")
+        await update.message.reply_text(f"⚠️ Ошибка: {str(e)}")
+    finally:
+        context.user_data.pop('conversion', None)
+
+async def process_tex_to_docx(update: Update, doc):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            # Скачивание файла
+            file = await doc.get_file()
+            content = await file.download_as_bytearray()
+            
+            # Сохранение временного файла
+            tex_path = os.path.join(tmp_dir, "input.tex")
+            with open(tex_path, 'wb') as f:
+                f.write(content)
+            
+            # Конвертация
+            docx_path = os.path.join(tmp_dir, "output.docx")
+            await convert_file(tex_path, docx_path, 'docx',
+                             ['--standalone', '--resource-path=.', '--citeproc'])
+            
+            # Отправка результата
+            with open(docx_path, 'rb') as f:
+                await update.message.reply_document(
+                    document=InputFile(f, filename=f"converted_{doc.file_name.replace('.tex', '.docx')}"),
+                    caption="✅ LaTeX -> DOCX конвертация завершена!"
+                )
+
+        except Exception as e:
+            logger.error(f"TeX->DOCX ошибка: {str(e)}")
+            raise
+
+async def process_docx_to_tex(update: Update, doc):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            # Скачивание файла
+            file = await doc.get_file()
+            content = await file.download_as_bytearray()
+            
+            # Сохранение временного файла
+            docx_path = os.path.join(tmp_dir, "input.docx")
+            with open(docx_path, 'wb') as f:
+                f.write(content)
+            
+            # Конвертация
+            tex_path = os.path.join(tmp_dir, "output.tex")
+            await convert_file(docx_path, tex_path, 'latex')
+            
+            # Улучшение TeX файла
+            enhance_tex_file(tex_path)
+            
+            # Создание архива
+            zip_path = os.path.join(tmp_dir, "converted.zip")
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                zipf.write(tex_path, os.path.basename(tex_path))
+            
+            # Отправка результата
+            with open(zip_path, 'rb') as f:
+                await update.message.reply_document(
+                    document=InputFile(f, filename=f"converted_{doc.file_name.replace('.docx', '.zip')}"),
+                    caption="✅ DOCX -> LaTeX конвертация завершена!\n📦 Архив содержит .tex файл с улучшенным шаблоном."
+                )
+
+        except Exception as e:
+            logger.error(f"DOCX->TeX ошибка: {str(e)}")
+            raise
+
+async def process_text_file(update: Update, doc):
+    try:
+        # Обработка текстовых файлов
+        file = await doc.get_file()
+        content = await file.download_as_bytearray()
+        text = content.decode('utf-8').replace(".", "-")
+        
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
+            tmp.write(text.encode('utf-8'))
+            tmp_path = tmp.name
+        
+        with open(tmp_path, 'rb') as f:
+            await update.message.reply_document(
+                document=InputFile(f, filename=f"fixed_{doc.file_name}"),
+                caption="✅ Текст обработан: точки заменены на тире!"
+            )
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+def enhance_tex_file(file_path: str):
+    preamble = r"""\documentclass[12pt, a4paper]{article}
+\usepackage[a4paper, mag=1000, left=1.5cm, right=1.5cm, top=2cm, bottom=2cm, headsep=0.7cm, footskip=1cm]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[english,russian]{babel}
+\usepackage[colorlinks=true, citecolor=blue, urlcolor=blue, linkcolor = blue]{hyperref}
+\usepackage{graphicx}
+\usepackage{physics}
+\usepackage{amsmath,amssymb}
+\usepackage{float}
+\usepackage[T2A]{fontenc}
+\usepackage{pdfpages}
+\usepackage{mathrsfs}
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{mathtools}
+\usepackage{icomma}
+\usepackage{soul}
+\usepackage{wrapfig}
+\usepackage{setspace}
+\usepackage{longtable}
+\usepackage{titlesec}
+\usepackage{array,tabularx,tabulary,booktabs}
+\usepackage{adjustbox}
+\usepackage{cancel}
+\usepackage{centernot}
+\usepackage{subcaption}
+\usepackage{listings}
+\usepackage{hhline}"""
+
+    with open(file_path, 'r+', encoding='utf-8') as f:
+        content = f.read()
+        f.seek(0)
+        f.write(preamble + "\n\\begin{document}\n" + content + "\n\\end{document}")
+        f.truncate()
+
+async def convert_file(input_path: str, output_path: str, fmt: str, args=None):
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: pypandoc.convert_file(
+                input_path, fmt,
+                outputfile=output_path,
+                extra_args=args or []
+            )
+        )
+    except RuntimeError as e:
+        logger.error(f"Pandoc error: {str(e)}")
+        raise
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Ошибка:", exc_info=context.error)
+    if update:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ Произошла ошибка при обработке запроса"
+        )
+
+def main():
+    application = Application.builder().token(TOKEN).build()
+
+    # Регистрация обработчиков
+    handlers = [
+        CommandHandler('start', start),
+        CommandHandler('help', help_command),
+        CallbackQueryHandler(button_handler),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text),
+        MessageHandler(filters.Document.ALL, handle_document)
+    ]
+    
+    application.add_handlers(handlers)
+    application.add_error_handler(error_handler)
+
+    logger.info("Бот запущен")
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
