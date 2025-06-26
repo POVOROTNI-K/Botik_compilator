@@ -10,8 +10,7 @@ from telegram import (
     InlineKeyboardMarkup,
     InputFile,
     ReplyKeyboardMarkup,
-    KeyboardButton,
-    Message
+    KeyboardButton
 )
 from telegram.ext import (
     Application,
@@ -34,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Главное меню
 def main_menu_keyboard():
     return ReplyKeyboardMarkup([
-        ["📄 Работа с файлами", "ℹ️ Помощь"],
+        ["📄 Работа с файлами ", "ℹ️ Помощь"],
         ["🔄 Эхо-режим", "⚙️ Настройки"]
     ], resize_keyboard=True)
 
@@ -45,45 +44,26 @@ def conversion_menu_keyboard():
         [InlineKeyboardButton("LaTeX ➡ DOCX", callback_data="tex_to_docx")]
     ])
 
-# Удаление текстовых сообщений через 5 секунд
-def is_pure_text_message(msg: Message) -> bool:
-    return (
-        msg.text is not None and
-        not any([msg.photo, msg.video, msg.document, msg.audio, msg.voice, msg.sticker, msg.animation])
-    )
-
-async def delete_text_messages_later(bot, chat_id, user_msg_id, bot_msg):
-    await asyncio.sleep(5)
-    try:
-        await bot.delete_message(chat_id=chat_id, message_id=user_msg_id)
-        if is_pure_text_message(bot_msg):
-            await bot.delete_message(chat_id=chat_id, message_id=bot_msg.message_id)
-    except Exception as e:
-        logger.warning(f"Не удалось удалить сообщение: {e}")
-
-# Обработчики
 async def start(update: Update, context: CallbackContext):
     user = update.effective_user
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         f"Привет, {user.first_name}! Я бот для конвертации файлов между LaTeX и DOCX.",
         reply_markup=main_menu_keyboard()
     )
-    await delete_text_messages_later(context.bot, update.effective_chat.id, update.message.message_id, msg)
 
 async def help_command(update: Update, context: CallbackContext):
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         "📌 Используйте кнопки меню для навигации:\n"
         "• 📄 Работа с файлами - преобразование документов\n"
         "• ℹ️ Помощь - это сообщение\n"
         "• 🔄 Эхо-режим - повторение ваших сообщений\n"
         "• ⚙️ Настройки - параметры бота"
     )
-    await delete_text_messages_later(context.bot, update.effective_chat.id, update.message.message_id, msg)
 
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
-
+    
     if query.data == "docx_to_tex":
         context.user_data['conversion'] = 'docx_to_tex'
         await query.edit_message_text("📤 Отправьте DOCX файл для конвертации в LaTeX")
@@ -93,39 +73,31 @@ async def button_handler(update: Update, context: CallbackContext):
 
 async def handle_text(update: Update, context: CallbackContext):
     text = update.message.text
-    bot_msg = None
-
+    
     if text == "📄 Работа с файлами":
-        bot_msg = await update.message.reply_text(
+        await update.message.reply_text(
             "🔧 Выберите тип конвертации:",
             reply_markup=conversion_menu_keyboard()
         )
     elif text == "ℹ️ Помощь":
-        bot_msg = await update.message.reply_text(
-            "📌 Используйте кнопки меню для навигации:\n"
-            "• 📄 Работа с файлами - преобразование документов\n"
-            "• ℹ️ Помощь - это сообщение\n"
-            "• 🔄 Эхо-режим - повторение ваших сообщений\n"
-            "• ⚙️ Настройки - параметры бота"
-        )
+        await help_command(update, context)
     elif text == "🔄 Эхо-режим":
         context.user_data['echo'] = True
-        bot_msg = await update.message.reply_text("Эхо-режим активирован 🔄")
+        await update.message.reply_text("Эхо-режим активирован 🔄")
     elif text == "⚙️ Настройки":
-        bot_msg = await update.message.reply_text("⚙️ Текущие настройки:\n- Формат логов: TEXT\n- Кодировка: UTF-8")
+        await update.message.reply_text("⚙️ Текущие настройки:\n- Формат логов: TEXT\n- Кодировка: UTF-8")
     else:
         if context.user_data.get('echo'):
-            bot_msg = await update.message.reply_text(f"🔁 Эхо: {text}")
-
-    if bot_msg:
-        await delete_text_messages_later(context.bot, update.effective_chat.id, update.message.message_id, bot_msg)
+            await update.message.reply_text(f"🔁 Эхо: {text}")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
+    user = update.effective_user
     file_ext = os.path.splitext(doc.file_name)[1].lower() if doc.file_name else ''
     conversion_type = context.user_data.get('conversion')
 
     try:
+        # Определение типа конвертации
         if conversion_type == 'docx_to_tex' or file_ext == '.docx':
             await process_docx_to_tex(update, doc)
         elif conversion_type == 'tex_to_docx' or file_ext == '.tex':
@@ -134,6 +106,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await process_text_file(update, doc)
         else:
             raise ValueError("❌ Неподдерживаемый формат файла!")
+
     except Exception as e:
         logger.error(f"Ошибка обработки файла: {str(e)}")
         await update.message.reply_text(f"⚠️ Ошибка: {str(e)}")
@@ -142,57 +115,78 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_tex_to_docx(update: Update, doc):
     with tempfile.TemporaryDirectory() as tmp_dir:
-        file = await doc.get_file()
-        content = await file.download_as_bytearray()
+        try:
+            # Скачивание файла
+            file = await doc.get_file()
+            content = await file.download_as_bytearray()
+            
+            # Сохранение временного файла
+            tex_path = os.path.join(tmp_dir, "input.tex")
+            with open(tex_path, 'wb') as f:
+                f.write(content)
+            
+            # Конвертация
+            docx_path = os.path.join(tmp_dir, "output.docx")
+            await convert_file(tex_path, docx_path, 'docx',
+                             ['--standalone', '--resource-path=.', '--citeproc'])
+            
+            # Отправка результата
+            with open(docx_path, 'rb') as f:
+                await update.message.reply_document(
+                    document=InputFile(f, filename=f"converted_{doc.file_name.replace('.tex', '.docx')}"),
+                    caption="✅ LaTeX -> DOCX конвертация завершена!"
+                )
 
-        tex_path = os.path.join(tmp_dir, "input.tex")
-        with open(tex_path, 'wb') as f:
-            f.write(content)
-
-        docx_path = os.path.join(tmp_dir, "output.docx")
-        await convert_file(tex_path, docx_path, 'docx',
-            ['--standalone', '--resource-path=.', '--citeproc'])
-
-        with open(docx_path, 'rb') as f:
-            await update.message.reply_document(
-                document=InputFile(f, filename=f"converted_{doc.file_name.replace('.tex', '.docx')}"),
-                caption="✅ LaTeX -> DOCX конвертация завершена!"
-            )
+        except Exception as e:
+            logger.error(f"TeX->DOCX ошибка: {str(e)}")
+            raise
 
 async def process_docx_to_tex(update: Update, doc):
     with tempfile.TemporaryDirectory() as tmp_dir:
-        file = await doc.get_file()
-        content = await file.download_as_bytearray()
+        try:
+            # Скачивание файла
+            file = await doc.get_file()
+            content = await file.download_as_bytearray()
+            
+            # Сохранение временного файла
+            docx_path = os.path.join(tmp_dir, "input.docx")
+            with open(docx_path, 'wb') as f:
+                f.write(content)
+            
+            # Конвертация
+            tex_path = os.path.join(tmp_dir, "output.tex")
+            await convert_file(docx_path, tex_path, 'latex')
+            
+            # Улучшение TeX файла
+            enhance_tex_file(tex_path)
+            
+            # Создание архива
+            zip_path = os.path.join(tmp_dir, "converted.zip")
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                zipf.write(tex_path, os.path.basename(tex_path))
+            
+            # Отправка результата
+            with open(zip_path, 'rb') as f:
+                await update.message.reply_document(
+                    document=InputFile(f, filename=f"converted_{doc.file_name.replace('.docx', '.zip')}"),
+                    caption="✅ DOCX -> LaTeX конвертация завершена!\n📦 Архив содержит .tex файл с улучшенным шаблоном."
+                )
 
-        docx_path = os.path.join(tmp_dir, "input.docx")
-        with open(docx_path, 'wb') as f:
-            f.write(content)
-
-        tex_path = os.path.join(tmp_dir, "output.tex")
-        await convert_file(docx_path, tex_path, 'latex')
-
-        enhance_tex_file(tex_path)
-
-        zip_path = os.path.join(tmp_dir, "converted.zip")
-        with zipfile.ZipFile(zip_path, 'w') as zipf:
-            zipf.write(tex_path, os.path.basename(tex_path))
-
-        with open(zip_path, 'rb') as f:
-            await update.message.reply_document(
-                document=InputFile(f, filename=f"converted_{doc.file_name.replace('.docx', '.zip')}"),
-                caption="✅ DOCX -> LaTeX конвертация завершена!\n📦 Архив содержит .tex файл с улучшенным шаблоном."
-            )
+        except Exception as e:
+            logger.error(f"DOCX->TeX ошибка: {str(e)}")
+            raise
 
 async def process_text_file(update: Update, doc):
-    file = await doc.get_file()
-    content = await file.download_as_bytearray()
-    text = content.decode('utf-8').replace(".", "-")
-
-    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
-        tmp.write(text.encode('utf-8'))
-        tmp_path = tmp.name
-
     try:
+        # Обработка текстовых файлов
+        file = await doc.get_file()
+        content = await file.download_as_bytearray()
+        text = content.decode('utf-8').replace(".", "-")
+        
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
+            tmp.write(text.encode('utf-8'))
+            tmp_path = tmp.name
+        
         with open(tmp_path, 'rb') as f:
             await update.message.reply_document(
                 document=InputFile(f, filename=f"fixed_{doc.file_name}"),
@@ -239,15 +233,19 @@ def enhance_tex_file(file_path: str):
         f.truncate()
 
 async def convert_file(input_path: str, output_path: str, fmt: str, args=None):
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None,
-        lambda: pypandoc.convert_file(
-            input_path, fmt,
-            outputfile=output_path,
-            extra_args=args or []
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: pypandoc.convert_file(
+                input_path, fmt,
+                outputfile=output_path,
+                extra_args=args or []
+            )
         )
-    )
+    except RuntimeError as e:
+        logger.error(f"Pandoc error: {str(e)}")
+        raise
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Ошибка:", exc_info=context.error)
@@ -260,15 +258,18 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 def main():
     application = Application.builder().token(TOKEN).build()
 
-    application.add_handlers([
+    # Регистрация обработчиков
+    handlers = [
         CommandHandler('start', start),
         CommandHandler('help', help_command),
         CallbackQueryHandler(button_handler),
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text),
-        MessageHandler(filters.Document.ALL, handle_document),
-    ])
-
+        MessageHandler(filters.Document.ALL, handle_document)
+    ]
+    
+    application.add_handlers(handlers)
     application.add_error_handler(error_handler)
+
     logger.info("Бот запущен")
     application.run_polling()
 
